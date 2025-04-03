@@ -98,24 +98,69 @@ def get_isotp_conn():
 
 def sboot_pwm():
     import time
-    import wavePWM
 
-    GPIO = [12, 13]
-
+    pwm_gpio1 = 13
+    pwm_gpio2 = 12
+    
+    # Define PWM frequency and duty cycle
+    pwm_frequency = 3210  # 1 kHz
+    duty_cycle_13 = 50      # 50% duty cycle (0-100)
+    duty_cycle_12 = 25      # 25% duty cycle (0-100)
+    
+    # Connect to pigpio daemon
+    pi = pigpio.pi()
     if not pi.connected:
-        exit(0)
+        exit()
+    
+    # Calculate the pulse width in microseconds for the duty cycle
+    pulse_width_13 = (1000000 / pwm_frequency) * duty_cycle_13 / 100
+    pulse_width_12 = (1000000 / pwm_frequency) * duty_cycle_12 / 100
+    
+    # Calculate the duration of a full cycle in microseconds
+    cycle_us = 1000000 / pwm_frequency
+    
+    # Define offset in microseconds
+    offset_us = cycle_us * 3 / 4
+    
+    # Create wave for PWM signal 1
+    pi.wave_add_generic([
+        pigpio.pulse(1 << pwm_gpio1, 0, pulse_width_13),
+        pigpio.pulse(0, 1 << pwm_gpio1, cycle_us - pulse_width_13),
+    ])
+    wave_id1 = pi.wave_create()
+    
+    # Create wave for PWM signal 2 with offset
+    pi.wave_add_generic([
+        pigpio.pulse(0, 0, offset_us),  # Add the offset
+        pigpio.pulse(1 << pwm_gpio2, 0, pulse_width_12),
+        pigpio.pulse(0, 1 << pwm_gpio2, cycle_us - pulse_width_12),
+    ])
+    
+    wave_id2 = pi.wave_create()
+    
+    # Transmit both waves simultaneously
+    pi.wave_send_sync(wave_id1)
+    pi.wave_send_sync(wave_id2)
+    
+    print("Offset PWM signals started")
+    
+    time.sleep(0.1)
+    
+    return pi
 
-    pwm = wavePWM.PWM(pi)  # Use default frequency
+    
+    # try:
+    #     while True:
+    #         time.sleep(0.1)  # Keep the script running to maintain waves
+    # except KeyboardInterrupt:
+    #     print("Stopping PWM signals...")
+    # finally:
+    #     # Stop waves and release resources
+    #     pi.wave_delete(wave_id1)
+    #     pi.wave_delete(wave_id2)
+    #     pi.stop()
+    #     print("PWM signals stopped.")
 
-    pwm.set_frequency(3210)
-    cl = pwm.get_cycle_length()
-    pwm.set_pulse_start_in_micros(13, cl / 1)
-    pwm.set_pulse_length_in_micros(13, cl / 2)
-
-    pwm.set_pulse_start_in_micros(12, 3 * cl / 4)
-    pwm.set_pulse_length_in_micros(12, cl / 4)
-    pwm.update()
-    return pwm
 
 
 def reset_ecu():
@@ -233,7 +278,7 @@ def sboot_crc_reset(crc_start_address):
 
 def sboot_shell():
     print("Setting up PWM waveforms...")
-    pwm = sboot_pwm()
+    pi = sboot_pwm()
     time.sleep(1)
     print("Resetting ECU into Supplier Bootloader...")
     reset_ecu()
@@ -255,13 +300,13 @@ def sboot_shell():
             print("Got A0 message")
             if stage2:
                 print("Switching to IsoTP Socket...")
-                pwm.cancel()
+                pi.stop()
                 return sboot_getseed()
             print("Sending 6B...")
             stage2 = True
         if message is not None and message.arbitration_id == 0x0A7:
             print("FAILURE")
-            pwm.cancel()
+            pi.stop()
             return False
 
 
